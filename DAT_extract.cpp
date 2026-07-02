@@ -3,12 +3,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <zlib.h>
+#include <string.h>
 #include "DAT_extract.h"
-#include "Load_Settings.h"
-#include "Edit_TILES_LST.h"
-#include "Proto_Files.h"
+// #include "Load_Settings.h"
+// #include "Edit_TILES_LST.h"
+// #include "Proto_Files.h"
 
-bool extract_from_DAT(const char* file_name, const char* dat_name, user_info* usr_nfo, DAT_file* dat_file, Buffer* buff);
+// bool extract_from_DAT(const char* file_name, const char* dat_name, user_info* usr_nfo, DAT_file* dat_file, Buffer* buff);
 
 DAT_file load_dat_file(const char* file_name, char* game_path)
 {
@@ -45,17 +46,17 @@ DAT_file load_dat_file(const char* file_name, char* game_path)
     return dat;
 }
 
-void append(char* dst, const char* src)
+void append(char* dst, const char* src, int max_len)
 {
     int i = 0;
     char* ptr = NULL;
-    while (dst[i] != '\0' && i < 4096) {
+    while (dst[i] != '\0' && i < max_len) {
         i++;
         if (dst[i] == '\0') {
             i++;
         }
     }
-    if (i >= 4096 - strlen(src)) {
+    if (i >= (max_len - strlen(src))) {
         return;
     }
     if (i != 0) {
@@ -75,55 +76,7 @@ char* DAT_to_txt(Buffer* buff)
     return txt;
 }
 
-
-bool tt_file_DAT_extract(user_info* usr_nfo, STATE_export* state)
-{
-    memset(state->extracted, 0, 4096);
-
-    //64mb buffer
-    #define BUFF_size           (1024*1024*64)
-    Buffer buff = {
-        .file_size = 0,
-        .file_data = (uint8_t*)malloc(BUFF_size),
-    };
-
-    DAT_file dat_file = load_dat_file("master", usr_nfo->default_game_path);
-
-    bool success = false;
-    if (usr_nfo->game_files.FRM_TILES_LST == NULL) {
-        append(state->extracted, "art\\TILES\\TILES.LST");
-        success = extract_from_DAT("art\\TILES\\TILES.LST", "master", usr_nfo, &dat_file, &buff);
-        if (!success) {
-            return false;
-        }
-        usr_nfo->game_files.FRM_TILES_LST = DAT_to_txt(&buff);
-    }
-
-    if (usr_nfo->game_files.PRO_TILES_LST == NULL && state->pro == true) {
-        append(state->extracted, "proto\\TILES\\TILES.LST");
-        success = extract_from_DAT("proto\\TILES\\TILES.LST", "master", usr_nfo, &dat_file, &buff);
-        if (!success) {
-            return false;
-        }
-        usr_nfo->game_files.PRO_TILES_LST = DAT_to_txt(&buff);
-    }
-
-    if (usr_nfo->game_files.PRO_TILE_MSG == NULL && state->pro == true) {
-        //TODO: need to store language in state?
-        append(state->extracted, "text\\english\\Game\\pro_tile.msg");
-        success = extract_from_DAT("text\\english\\Game\\pro_tile.msg", "master", usr_nfo, &dat_file, &buff);
-        if (!success) {
-            return false;
-        }
-        usr_nfo->game_files.PRO_TILE_MSG = DAT_to_txt(&buff);
-    }
-
-    free(dat_file.data);
-    free(buff.file_data);
-    return true;
-}
-
-bool extract_from_DAT(const char* file_name, const char* dat_name, user_info* usr_nfo, DAT_file* dat_file, Buffer* buff)
+bool extract_from_DAT(const char* file_name, const char* dat_name, char* game_path, DAT_file* dat_file, Buffer* buff)
 {
     if (dat_file->size < 1) {
         //TODO: log to file
@@ -200,7 +153,7 @@ bool extract_from_DAT(const char* file_name, const char* dat_name, user_info* us
 
         memset(buff->file_data, 0, buff->file_size);
         // ulong temp = BUFF_size;
-        buff->file_size = BUFF_size;
+        // buff->file_size = BUFF_size;
 
         // int success = uncompress(buff->file_data, &temp, entry.file_ptr, entry.packed_size);
         int success = uncompress(buff->file_data, (ulong*)&buff->file_size, entry.file_ptr, entry.packed_size);
@@ -214,7 +167,7 @@ bool extract_from_DAT(const char* file_name, const char* dat_name, user_info* us
         printf("writing file to disk: %s\n", entry.path_ptr);
 
         char path_buff[MAX_PATH] = {0};
-        snprintf(path_buff, MAX_PATH, "%s/data/%s", usr_nfo->default_game_path, entry.path_ptr);
+        snprintf(path_buff, MAX_PATH, "%s/data/%s", game_path, entry.path_ptr);
         io_swap_slash(path_buff);
 
         char* path_case = io_path_check(path_buff);
