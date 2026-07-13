@@ -1,3 +1,5 @@
+//https://fodev.net/files/fo2/dat.html
+//https://fallout.fandom.com/wiki/DAT_file
 //Thank you to @BakerStaunch!
 //This is mostly a rewrite of his source code
 #include <stdio.h>
@@ -5,11 +7,28 @@
 #include <zlib.h>
 #include <string.h>
 #include "DAT_extract.h"
-// #include "Load_Settings.h"
-// #include "Edit_TILES_LST.h"
-// #include "Proto_Files.h"
 
-// bool extract_from_DAT(const char* file_name, const char* dat_name, user_info* usr_nfo, DAT_file* dat_file, Buffer* buff);
+int32_t read_i32(DAT_file* dat, int* offset)
+{
+    if ((*offset + sizeof(int32_t)) > dat->file_size) {
+        return 0;
+    }
+
+    uint8_t* data = &dat->data[*offset];
+
+    int32_t out;
+    memcpy(&out, data, 4);
+    // uint8_t bytes[4];
+    // memcpy(bytes, data, 4);
+    // out = (bytes[3] <<  0)
+    //     | (bytes[2] <<  8)
+    //     | (bytes[1] << 16)
+    //     | (bytes[0] << 24);
+
+    *offset += sizeof(int32_t);
+
+    return out;
+}
 
 DAT_file load_dat_file(const char* file_name, char* game_path)
 {
@@ -39,9 +58,9 @@ DAT_file load_dat_file(const char* file_name, char* game_path)
     }
     fclose(dat_file);
 
-    dat.data = dat_data;
-    dat.size = dat_size;
-    snprintf(dat.name, MAX_PATH, "%s", file_name);
+    dat.file_size = dat_size;
+    dat.data      = dat_data;
+    snprintf(dat.file_name, MAX_PATH, "%s", file_name);
 
     return dat;
 }
@@ -67,87 +86,179 @@ void append(char* dst, const char* src, int max_len)
     strncpy(ptr, src, strlen(src));
 }
 
+int get_data_size(DAT_file* dat)
+{
+    int offset    = dat->file_size - 4;
+    int data_size = read_i32(dat, &offset);
+
+    return data_size;
+}
+
+int get_dir_tree_size(DAT_file* dat)
+{
+    int offset = dat->file_size - 8;
+    int dir_tree_size = read_i32(dat, &offset);
+
+    return dir_tree_size;
+}
+
+uint8_t* get_dir_tree_ptr(DAT_file* dat, int dir_tree_size)
+{
+    int offset = dat->file_size - dir_tree_size - 8;
+    uint8_t* dir_tree_ptr = &dat->data[offset];
+
+    return dir_tree_ptr;
+}
+
+int32_t get_dir_tree_i32(uint8_t* dir_tree, int* offset)
+{
+    // int32_t out = *(int32_t*)&dir_tree[*offset];
+    int32_t out;
+    memcpy(&out, &dir_tree[*offset], 4);
+    *offset += sizeof(out);
+
+    return out;
+}
+
+char* get_dir_tree_path(uint8_t* dir_tree, int* offset, int path_len)
+{
+    char* path = (char*)&dir_tree[*offset];
+    *offset += path_len;
+
+    return path;
+}
+
+uint8_t get_dir_tree_pack(uint8_t* dir_tree, int* offset)
+{
+    uint8_t packed = dir_tree[(*offset)++];
+
+    return packed;
+}
+
+DIR_entries get_dir_entry_list(DAT_file* dat)
+{
+    DIR_entries handle = {0};
+    //TODO: verify this is correct - it doesn't seem like it should match file size
+    int size = dat->file_size;
+
+    int dir_tree_size = get_dir_tree_size(dat);
+    if (dir_tree_size < 0 || dir_tree_size > size - 8) {
+        //TODO: log to file
+        // set_popup_warning();
+        printf("Error: get_dir_entry_list() %s directory entry size (%d) out of bounds from file size (%d): L%d",
+                dat->file_name, dir_tree_size, dat->file_size, __LINE__);
+        handle.list = nullptr;
+        return handle;
+    }
+
+    uint8_t* dir_tree = get_dir_tree_ptr(dat, dir_tree_size);
+    int dir_tree_offset = 0;
+    int dir_tree_cnt = get_dir_tree_i32(dir_tree, &dir_tree_offset);
+    if (dir_tree_cnt < 0) {
+        //TODO: log to file
+        // set_popup_warning();
+        printf("Error: get_dir_entry_list() %s directory count (%d) out of bounds from file size (%d): L%d",
+                dat->file_name, dir_tree_cnt, dat->file_size, __LINE__);
+        handle.list = nullptr;
+        return handle;
+    }
+
+    handle.count = dir_tree_cnt;
+
+    DIR_entry* entries = (DIR_entry*)calloc(dir_tree_cnt, sizeof(DIR_entry));
+
+    bool extract_success = true;
+    uint8_t* eof_ptr = &dat->data[size];
+    for (int idx = 0; (idx < dir_tree_cnt) && (&dir_tree[dir_tree_offset+4] < eof_ptr); idx++)
+    {
+
+        int path_size = get_dir_tree_i32(dir_tree, &dir_tree_offset);
+        if ((path_size < 0)
+        || (path_size > MAX_PATH)
+        // || (entry_ptr + path_size + 16 >= eof_ptr)) {
+        || (&dir_tree[dir_tree_offset + path_size + 16] >= eof_ptr)) {
+            //TODO: log to file
+            // set_popup_warning();
+            printf("Error: get_dir_entry_list() Reached end of file %s after reading only %d of %d entries: L%d",
+                    dat->file_name, idx, dir_tree_cnt, __LINE__);
+            extract_success = false;
+            break;
+        }
+
+        DIR_entry* entry   = &entries[idx];
+        entry->path_size   = path_size;
+        entry->path_ptr    = get_dir_tree_path(dir_tree, &dir_tree_offset, path_size);
+        entry->packed      = get_dir_tree_pack(dir_tree, &dir_tree_offset);
+        entry->unpack_size = get_dir_tree_i32(dir_tree, &dir_tree_offset);
+        entry->packed_size = get_dir_tree_i32(dir_tree, &dir_tree_offset);
+        entry->offset      = get_dir_tree_i32(dir_tree, &dir_tree_offset);
+        entry->file_ptr    = &dat->data[entry->offset];
+    }
+
+    if (extract_success == false) {
+        free(entries);
+        handle.list = nullptr;
+        return handle;
+    }
+
+    handle.list = entries;
+    return handle;
+}
+
+
 //copies buff.file_data into malloc'd char* txt
 //returns pointer to char* txt
-char* DAT_to_txt(Buffer* buff)
+char* DAT_to_txt(DAT_Buffer* buff)
 {
     char* txt = (char*)malloc(buff->file_size+1);
     memcpy(txt, buff->file_data, buff->file_size);
     return txt;
 }
 
-bool extract_from_DAT(const char* file_name, const char* dat_name, char* game_path, DAT_file* dat_file, Buffer* buff)
+bool extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat, DAT_Buffer* buff)
 {
-    if (dat_file->size < 1) {
+    if (dat->file_size < 1) {
         //TODO: log to file
         // set_popup_warning();
-        printf("Error: extract_from_DAT() Unable to load %s DAT file: L%d\n", dat_name, __LINE__);
+        printf("Error: extract_from_DAT() Unable to load %s DAT file: L%d\n",
+                dat->file_name, __LINE__);
         return false;
     }
 
-    // uint8_t* dat_ptr = dat_file.data + dat_file.size;
-    int size = *(int32_t*)&dat_file->data[dat_file->size - 4];
-    if (size != dat_file->size) {
+    int size = get_data_size(dat);
+    if (size != dat->file_size) {
         //TODO: log to file
         // set_popup_warning();
-        printf("Error: extract_from_DAT() %s stored size (%d) doesn't match on-disk size (%d): L%d", dat_name, size, dat_file->size, __LINE__);
-        return false;
-    }
-    int dir_tree_size = *(int32_t*)&dat_file->data[dat_file->size - 8];
-    if (dir_tree_size < 0 || dir_tree_size > size - 8) {
-        //TODO: log to file
-        // set_popup_warning();
-        printf("Error: extract_from_DAT() %s directory entry size (%d) out of bounds from file size (%d): L%d", dat_name, dir_tree_size, dat_file->size, __LINE__);
+        printf("Error: extract_from_DAT() %s stored size (%d) doesn't match on-disk size (%d): L%d",
+                dat->file_name, size, dat->file_size, __LINE__);
         return false;
     }
 
-    uint8_t* entry_ptr = &dat_file->data[size - dir_tree_size - 8];
-    int entry_count = *(int32_t*)&entry_ptr[0];
-    if (entry_count < 0) {
-        //TODO: log to file
-        // set_popup_warning();
-        printf("Error: extract_from_DAT() %s directory count (%d) out of bounds from file size (%d): L%d", dat_name, entry_count, dat_file->size, __LINE__);
+
+
+    DIR_entries entries = get_dir_entry_list(dat);
+    if (entries.list == nullptr) {
+        printf("Failed to find file entries for %s, check above errors.\n", dat->file_name);
         return false;
     }
-    entry_ptr += 4;
 
+    // scan entries for matching names
+    //TODO: possibly also sort entries or make hash table for speed?
     bool extract_success = false;
-    uint8_t* eof_ptr = &dat_file->data[size];
-    for (int idx = 0; (idx < entry_count) && (entry_ptr+4 < eof_ptr); idx++)
+    for (int idx = 0; idx < entries.count; idx++)
     {
-        int path_size = *(int32_t*)&entry_ptr[0];
-        if ((path_size < 0)
-        || (path_size > MAX_PATH)
-        || (entry_ptr + path_size + 16 >= eof_ptr)) {
-            //TODO: log to file
-            // set_popup_warning();
-            printf("Error: extract_from_DAT() Reached end of file %s after reading only %d of %d entries: L%d", dat_name, idx, entry_count, __LINE__);
-            extract_success = false;
-            break;
-        }
-
-
-        DIR_entry entry        = {0};
-        entry.path_ptr         = (char*)&entry_ptr[4];
-        entry.packed           = entry_ptr[4+path_size];
-        entry_ptr[4+path_size] = '\0';
-
+        DIR_entry* entry = &entries.list[idx];
 
         // printf("%s\n", entry.path_ptr);
-        if (entry.path_ptr[0] != file_name[0]) {
-            entry_ptr = &entry_ptr[4+path_size+1+4+4+4];
+        if (entry->path_ptr[0] != file_name[0]) {
             continue;
         }
-        int cmp = io_strncasecmp(file_name, entry.path_ptr, path_size);
+        int cmp = io_strncasecmp(file_name, entry->path_ptr, entry->path_size);
         if (cmp != 0) {
-            entry_ptr = &entry_ptr[4+path_size+1+4+4+4];
             continue;
         }
 
-        entry.unpack_size = *(int32_t*)&entry_ptr[4+path_size+1];
-        entry.packed_size = *(int32_t*)&entry_ptr[4+path_size+1+4];
-        entry.offset      = *(int32_t*)&entry_ptr[4+path_size+1+4+4];
-        entry.file_ptr    = &dat_file->data[entry.offset];
+
 
         // printf("****%s\n", entry.path_ptr);
 
@@ -156,7 +267,8 @@ bool extract_from_DAT(const char* file_name, const char* dat_name, char* game_pa
         // buff->file_size = BUFF_size;
 
         // int success = uncompress(buff->file_data, &temp, entry.file_ptr, entry.packed_size);
-        int success = uncompress(buff->file_data, (ulong*)&buff->file_size, entry.file_ptr, entry.packed_size);
+        // int success = uncompress(buff->file_data, (ulong*)&buff->file_size, entry.file_ptr, entry.packed_size);
+        int success = uncompress(buff->file_data, (ulong*)&entry->unpack_size, entry->file_ptr, entry->packed_size);
         if (success != Z_OK) {
             printf("wtf?\n");
             extract_success = false;
@@ -164,10 +276,10 @@ bool extract_from_DAT(const char* file_name, const char* dat_name, char* game_pa
         }
 
         //TODO: log to file
-        printf("writing file to disk: %s\n", entry.path_ptr);
+        printf("writing file to disk: %s\n", entry->path_ptr);
 
         char path_buff[MAX_PATH] = {0};
-        snprintf(path_buff, MAX_PATH, "%s/data/%s", game_path, entry.path_ptr);
+        snprintf(path_buff, MAX_PATH, "%s/data/%s", game_path, entry->path_ptr);
         io_swap_slash(path_buff);
 
         char* path_case = io_path_check(path_buff);
@@ -178,7 +290,7 @@ bool extract_from_DAT(const char* file_name, const char* dat_name, char* game_pa
             break;
         }
         if (!io_save_txt_file(path_case, (char*)buff->file_data)) {
-            printf("Unable to write file: %s\n", entry.path_ptr);
+            printf("Unable to write file: %s\n", entry->path_ptr);
             extract_success = false;
         }
         extract_success = true;
