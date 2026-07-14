@@ -166,6 +166,11 @@ DIR_entries get_dir_entry_list(DAT_file* dat)
     handle.count = dir_tree_cnt;
 
     DIR_entry* entries = (DIR_entry*)calloc(dir_tree_cnt, sizeof(DIR_entry));
+    if (entries == nullptr) {
+        printf("ERROR: Unable to allocate memory for tree entries.\n");
+        handle.list = nullptr;
+        return handle;
+    }
 
     bool extract_success = true;
     uint8_t* eof_ptr = &dat->data[size];
@@ -192,7 +197,7 @@ DIR_entries get_dir_entry_list(DAT_file* dat)
         entry->unpack_size = get_dir_tree_i32(dir_tree, &dir_tree_offset);
         entry->packed_size = get_dir_tree_i32(dir_tree, &dir_tree_offset);
         entry->offset      = get_dir_tree_i32(dir_tree, &dir_tree_offset);
-        entry->file_ptr    = &dat->data[entry->offset];
+        entry->packed_ptr  = &dat->data[entry->offset];
     }
 
     if (extract_success == false) {
@@ -202,54 +207,53 @@ DIR_entries get_dir_entry_list(DAT_file* dat)
     }
 
     handle.list = entries;
+    //TODO: possibly also sort entries or make hash table for speed?
     return handle;
 }
 
-
+//TODO: this doesn't seem useful for anything
+//      probably delete?
 //copies buff.file_data into malloc'd char* txt
 //returns pointer to char* txt
-char* DAT_to_txt(DAT_Buffer* buff)
+// char* DAT_to_txt(DAT_buffer* buff)
+// {
+//     char* txt = (char*)malloc(buff->size+1);
+//     memcpy(txt, buff->data, buff->size);
+//     return txt;
+// }
+
+void write_to_disk(DIR_entry* entry, char* game_path, DAT_buffer* buff)
 {
-    char* txt = (char*)malloc(buff->file_size+1);
-    memcpy(txt, buff->file_data, buff->file_size);
-    return txt;
+    //TODO: log to file
+    printf("writing file to disk: %s\n", entry->path_ptr);
+
+    char path_buff[MAX_PATH] = {0};
+    snprintf(path_buff, MAX_PATH, "%s/data/%s", game_path, entry->path_ptr);
+    io_swap_slash(path_buff);
+
+    char* path_case = io_path_check(path_buff);
+    if (!io_create_path_from_file(path_case)) {
+        //fail state
+        printf("Unable to create missing directory: %s\n", path_case);
+        // extract_success = false;
+        // break;
+    }
+    if (!io_save_txt_file(path_case, (char*)buff->data)) {
+        printf("Unable to write file: %s\n", entry->path_ptr);
+        // extract_success = false;
+    }
 }
 
-bool extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat, DAT_Buffer* buff)
+DIR_entry* get_entry_from_dat(DIR_entries entries, const char* file_name)
 {
-    if (dat->file_size < 1) {
-        //TODO: log to file
-        // set_popup_warning();
-        printf("Error: extract_from_DAT() Unable to load %s DAT file: L%d\n",
-                dat->file_name, __LINE__);
-        return false;
-    }
-
-    int size = get_data_size(dat);
-    if (size != dat->file_size) {
-        //TODO: log to file
-        // set_popup_warning();
-        printf("Error: extract_from_DAT() %s stored size (%d) doesn't match on-disk size (%d): L%d",
-                dat->file_name, size, dat->file_size, __LINE__);
-        return false;
-    }
-
-
-
-    DIR_entries entries = get_dir_entry_list(dat);
-    if (entries.list == nullptr) {
-        printf("Failed to find file entries for %s, check above errors.\n", dat->file_name);
-        return false;
-    }
-
     // scan entries for matching names
     //TODO: possibly also sort entries or make hash table for speed?
-    bool extract_success = false;
-    for (int idx = 0; idx < entries.count; idx++)
+    DIR_entry* entry = nullptr;
+    for (int i = 0; i < entries.count; i++)
     {
-        DIR_entry* entry = &entries.list[idx];
+        entry = &entries.list[i];
 
-        // printf("%s\n", entry.path_ptr);
+        // printf("%s\n", entry->path_ptr);
         if (entry->path_ptr[0] != file_name[0]) {
             continue;
         }
@@ -258,44 +262,78 @@ bool extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat, DAT
             continue;
         }
 
-
-
-        // printf("****%s\n", entry.path_ptr);
-
-        memset(buff->file_data, 0, buff->file_size);
-        // ulong temp = BUFF_size;
-        // buff->file_size = BUFF_size;
+        DAT_buffer buff = {
+            buff.size = entry->unpack_size,
+            buff.data = (uint8_t*)calloc(1, buff.size),
+        };
+        if (buff.data == nullptr) {
+            printf("ERROR: Unable to allocate memory for file extraction.\n");
+            return nullptr;
+        }
 
         // int success = uncompress(buff->file_data, &temp, entry.file_ptr, entry.packed_size);
         // int success = uncompress(buff->file_data, (ulong*)&buff->file_size, entry.file_ptr, entry.packed_size);
-        int success = uncompress(buff->file_data, (ulong*)&entry->unpack_size, entry->file_ptr, entry->packed_size);
+        uint64_t extracted_size = buff.size;
+        int success = uncompress(buff.data, &extracted_size, entry->packed_ptr, entry->packed_size);
         if (success != Z_OK) {
-            printf("wtf?\n");
-            extract_success = false;
+            printf("ERROR: Extracting failed at uncompress(): %d\n",
+                    success);
+            // extract_success = false;
+            //TODO: probably return false here?
+            return nullptr;
             break;
         }
-
-        //TODO: log to file
-        printf("writing file to disk: %s\n", entry->path_ptr);
-
-        char path_buff[MAX_PATH] = {0};
-        snprintf(path_buff, MAX_PATH, "%s/data/%s", game_path, entry->path_ptr);
-        io_swap_slash(path_buff);
-
-        char* path_case = io_path_check(path_buff);
-        if (!io_create_path_from_file(path_case)) {
-            //fail state
-            printf("Unable to create missing directory: %s\n", path_case);
-            extract_success = false;
-            break;
+        if (extracted_size != buff.size) {
+            printf("ERROR: Uncompress size doesn't match expected size: Expected: %d, Got: %d\n",
+                    buff.size, extracted_size);
         }
-        if (!io_save_txt_file(path_case, (char*)buff->file_data)) {
-            printf("Unable to write file: %s\n", entry->path_ptr);
-            extract_success = false;
-        }
-        extract_success = true;
+
+        entry->unpacked_file = buff;
+
+        // extract_success = true;
         break;
     }
 
-    return extract_success;
+    // return extract_success;
+    return entry;
+}
+
+bool extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat)//, DAT_Buffer* buff)
+{
+    if (dat->file_size < 1) {
+        //TODO: log to file
+        // set_popup_warning();
+        printf("ERROR: extract_from_DAT() Unable to load %s DAT file: L%d\n",
+                dat->file_name, __LINE__);
+        return false;
+    }
+
+    int size = get_data_size(dat);
+    if (size != dat->file_size) {
+        //TODO: log to file
+        // set_popup_warning();
+        printf("ERROR: extract_from_DAT() %s stored size (%d) doesn't match on-disk size (%d): L%d",
+                dat->file_name, size, dat->file_size, __LINE__);
+        return false;
+    }
+
+    DIR_entries entries = {0};
+    if (entries.list == nullptr) {
+        entries = get_dir_entry_list(dat);
+    }
+    if (entries.list == nullptr) {
+        printf("ERROR: Failed to extract file entries for %s, check previous errors.\n",
+                dat->file_name);
+        return false;
+    }
+
+
+    DIR_entry* scenery_lst = get_entry_from_dat(entries, file_name);
+    if (scenery_lst == nullptr) {
+        printf("ERROR: Failed to extract %s from %s dat file.\n",
+                file_name, dat->file_name);
+        return false;
+    }
+
+    return true;
 }

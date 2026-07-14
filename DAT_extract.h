@@ -11,6 +11,12 @@ struct DAT_file {
     uint8_t* data;
 };
 
+//generic buffer struct?
+struct DAT_buffer {
+    int32_t  size = 0;
+    uint8_t* data = nullptr;
+};
+
 struct DIR_entry {
     char*   path_ptr;
     int32_t path_size;
@@ -18,22 +24,19 @@ struct DIR_entry {
     int32_t unpack_size;
     int32_t packed_size;
     int32_t offset;
-    uint8_t* file_ptr;
+    uint8_t* packed_ptr;
+
+    DAT_buffer unpacked_file;
 };
 struct DIR_entries {
     int32_t count;
     DIR_entry* list;
 };
 
-//generic buffer struct?
-struct DAT_Buffer {
-    int32_t  file_size = 0;
-    uint8_t* file_data = nullptr;
-};
 
 //TODO: clean this up
 DAT_file load_dat_file(const char* file_name, char* game_path);
-bool extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat, DAT_Buffer* buff);
+bool extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat);//, DAT_Buffer* buff);
 
 // bool tt_file_DAT_extract(user_info* usr_nfo, STATE_export* state);
 // bool extract_from_DAT(char* file_name, char* dat_name, user_info* usr_nfo, DAT_file* dat_file, Buffer* buff);
