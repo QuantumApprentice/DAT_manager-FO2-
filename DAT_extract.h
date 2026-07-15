@@ -33,10 +33,15 @@ struct DIR_entries {
     DIR_entry* list;
 };
 
+struct LST_array {
+    int32_t count;
+    char** line;
+};
 
 //TODO: clean this up
 DAT_file load_dat_file(const char* file_name, char* game_path);
-bool extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat);//, DAT_Buffer* buff);
+DIR_entry* extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat);//, DAT_Buffer* buff);
+LST_array lst_convert(char* lst_file, int size);
 
 // bool tt_file_DAT_extract(user_info* usr_nfo, STATE_export* state);
 // bool extract_from_DAT(char* file_name, char* dat_name, user_info* usr_nfo, DAT_file* dat_file, Buffer* buff);

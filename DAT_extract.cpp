@@ -180,7 +180,6 @@ DIR_entries get_dir_entry_list(DAT_file* dat)
         int path_size = get_dir_tree_i32(dir_tree, &dir_tree_offset);
         if ((path_size < 0)
         || (path_size > MAX_PATH)
-        // || (entry_ptr + path_size + 16 >= eof_ptr)) {
         || (&dir_tree[dir_tree_offset + path_size + 16] >= eof_ptr)) {
             //TODO: log to file
             // set_popup_warning();
@@ -244,7 +243,7 @@ void write_to_disk(DIR_entry* entry, char* game_path, DAT_buffer* buff)
     }
 }
 
-DIR_entry* get_entry_from_dat(DIR_entries entries, const char* file_name)
+DIR_entry* extract_entry_by_name(DIR_entries entries, const char* file_name)
 {
     // scan entries for matching names
     //TODO: possibly also sort entries or make hash table for speed?
@@ -298,14 +297,14 @@ DIR_entry* get_entry_from_dat(DIR_entries entries, const char* file_name)
     return entry;
 }
 
-bool extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat)//, DAT_Buffer* buff)
+DIR_entry* extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat)//, DAT_Buffer* buff)
 {
     if (dat->file_size < 1) {
         //TODO: log to file
         // set_popup_warning();
         printf("ERROR: extract_from_DAT() Unable to load %s DAT file: L%d\n",
                 dat->file_name, __LINE__);
-        return false;
+        return nullptr;
     }
 
     int size = get_data_size(dat);
@@ -314,7 +313,7 @@ bool extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat)//, 
         // set_popup_warning();
         printf("ERROR: extract_from_DAT() %s stored size (%d) doesn't match on-disk size (%d): L%d",
                 dat->file_name, size, dat->file_size, __LINE__);
-        return false;
+        return nullptr;
     }
 
     DIR_entries entries = {0};
@@ -324,16 +323,46 @@ bool extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat)//, 
     if (entries.list == nullptr) {
         printf("ERROR: Failed to extract file entries for %s, check previous errors.\n",
                 dat->file_name);
-        return false;
+        return nullptr;
     }
 
-
-    DIR_entry* scenery_lst = get_entry_from_dat(entries, file_name);
-    if (scenery_lst == nullptr) {
+    DIR_entry* extracted = extract_entry_by_name(entries, file_name);
+    if (extracted == nullptr) {
         printf("ERROR: Failed to extract %s from %s dat file.\n",
                 file_name, dat->file_name);
-        return false;
+        return nullptr;
     }
 
-    return true;
+    return extracted;
+}
+
+LST_array lst_convert(char* lst_file, int size)
+{
+    LST_array array = {0};
+
+    for (int i = 0; i < size; i++) {
+        if (lst_file[i] == '\n') {
+            array.count++;
+        }
+    }
+
+    array.line = (char**)malloc(array.count * sizeof(char*));
+    if (array.line == nullptr) {
+        printf("ERROR: lst_convert(): Unable to allocate memory for LST_array.\n");
+        return array;
+    }
+
+    int idx = 0;
+    array.line[idx] = &lst_file[0];
+    for (int i = 0; i < size; i++) {
+        if (lst_file[i] == '\r') {
+            lst_file[i] = '\0';
+        }
+        if (lst_file[i] == '\n') {
+            array.line[++idx] = &lst_file[i+1];
+            lst_file[i] = '\0';
+        }
+    }
+
+    return array;
 }
