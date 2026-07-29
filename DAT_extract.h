@@ -1,15 +1,6 @@
 #pragma once
 #include <stdint.h>
 #include "io_Platform.h"
-// #include "Load_Settings.h"
-// #include "town_map_tiles.h"
-
-struct DAT_file {
-    char     file_name[MAX_PATH];
-    int32_t  file_size;
-    int32_t  data_size;
-    uint8_t* data;
-};
 
 //generic buffer struct?
 struct DAT_buffer {
@@ -31,6 +22,14 @@ struct DIR_entry {
 struct DIR_entries {
     int32_t count;
     DIR_entry* list;
+};
+
+struct DAT_file {
+    char     file_name[MAX_PATH];
+    int32_t  file_size;
+    int32_t  data_size;
+    uint8_t* data;
+    DIR_entries dir_entries;
 };
 
 struct LST_array {
