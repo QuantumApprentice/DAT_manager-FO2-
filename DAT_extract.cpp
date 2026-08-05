@@ -241,7 +241,7 @@ void write_to_disk(DIR_entry* entry, char* game_path, DAT_buffer* buff)
 }
 
 // This takes full path/file name, finds the matching dat entry (if there is one)
-// and extracts the file to the entry.unpacked_file, then returns a pointer to that entry.
+// and extracts the file to entry.unpacked_file, then returns a pointer to that entry.
 // If no file found, or any known error occurs, nullptr is returned.
 // If the entry for a match is already found with allocated memory,
 // then that entry pointer is returned.
@@ -267,7 +267,8 @@ DIR_entry* extract_entry_by_name(DIR_entries* entries, const char* file_name)
 
         DAT_buffer* buff = &entry->unpacked_file;
         if (buff->data != nullptr) {
-            printf("ERROR? entry->unpacked_file already assigned?\n");
+            //TODO: remove this printf? this isn't an error per se
+            // printf("ERROR? entry->unpacked_file already assigned?\n");
             found = true;
             break;
         }
@@ -279,12 +280,21 @@ DIR_entry* extract_entry_by_name(DIR_entries* entries, const char* file_name)
         buff->data = (uint8_t*)calloc(1, entry->unpack_size);
         if (buff->data == nullptr) {
             printf("ERROR: Unable to allocate memory for file extraction.\n");
+            buff->size = 0;
             return nullptr;
         }
 
+        if (entry->packed == false) {
+            printf("File %s is already uncompressed\n", file_name);
+            if (entry->packed_size != entry->unpack_size) {
+                printf("ERROR: Expected packed_size: %d got unpack_size: %d\n", entry->packed_size, entry->unpack_size);
+            }
+            memcpy(buff->data, entry->packed_ptr, entry->unpack_size);
+            found = true;
+            break;
+        }
+
         uint64_t extracted_size = buff->size;
-
-
         int success = uncompress(buff->data, &extracted_size, entry->packed_ptr, entry->packed_size);
         if (success != Z_OK) {
             printf("ERROR: Extracting failed at uncompress(): %d\n",
@@ -307,7 +317,7 @@ DIR_entry* extract_entry_by_name(DIR_entries* entries, const char* file_name)
     return nullptr;
 }
 
-DIR_entry* extract_from_DAT(const char* file_name, char* game_path, DAT_file* dat)//, DAT_Buffer* buff)
+DIR_entry* extract_from_DAT(const char* file_name, DAT_file* dat)
 {
     if (dat->file_size < 1) {
         //TODO: log to file
